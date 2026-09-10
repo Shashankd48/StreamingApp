@@ -273,6 +273,9 @@ All 6 containers started up successfully:
 - `orchestrationandscaling-chat-1`: Port `3004` (Chat Service)
 - `orchestrationandscaling-frontend-1`: Port `3000` mapped to container port `80` (React + Nginx)
 
+![Figure 2.1: Local Docker Images Built for Microservices Stack](screenshots/02-local-docker-build-images.png)
+*Figure 2.1: Local Docker images built and tagged for the microservices stack in Docker Desktop.*
+
 #### Verification 2: Endpoint Health Checks
 I verified the HTTP responses of each service:
 - `curl -I http://localhost:3000` $\rightarrow$ **`HTTP/1.1 200 OK`** (Frontend UI)
@@ -288,9 +291,203 @@ docker compose down
 
 ---
 
-## Step 3: AWS Environment & IAM Security Configuration *(In Progress)*
+## Step 3: AWS Environment Setup, Amazon S3 & Amazon ECR Provisioning
 
-*(Documentation for configuring AWS credentials, IAM policies, and S3 bucket setup will be recorded here, along with console verification screenshots).*
+### 3.1 Objective & Approach
+With local Docker containerization verified, the next phase was preparing our cloud infrastructure on AWS:
+1. Authenticate and configure the AWS CLI with temporary session credentials from the Hero Vired AWS Access Portal.
+2. Provision an Amazon S3 bucket with CORS configuration to store video and thumbnail assets for `streamingService` and `adminService`.
+3. Create 5 private Amazon Elastic Container Registry (ECR) repositories with image vulnerability scanning on push enabled.
+4. Authenticate the local Docker client to Amazon ECR, then build, tag, and push versioned (`v1.0.0`) and `latest` images for all 5 microservices.
+
+---
+
+### 3.2 AWS CLI Authentication & Identity Verification
+
+I configured the AWS CLI on my workstation and verified my active session credentials:
+
+```bash
+aws sts get-caller-identity
+```
+
+**Output:**
+```json
+{
+    "UserId": "AROAZ2WBSQ5K7GWNUUVM7:shashankd48+HV17@gmail.com",
+    "Account": "675789571925",
+    "Arn": "arn:aws:sts::675789571925:assumed-role/AWSReservedSSO_AWSAdministratorAccess_746daa54115cde7e/shashankd48+HV17@gmail.com"
+}
+```
+
+- **AWS Account ID:** `675789571925`
+- **Assigned Region:** `ap-south-1` (Asia Pacific - Mumbai)
+- **IAM Role:** `AdministratorAccess` via AWS IAM Identity Center (SSO)
+
+![Figure 3.1: Hero Vired AWS Access Portal – Programmatic Access Credentials](screenshots/01-get-aws-account-credentials.png)
+*Figure 3.1: Obtaining programmatic access session credentials from the Hero Vired AWS IAM Identity Center Access Portal.*
+
+---
+
+### 3.3 Amazon S3 Media Storage Bucket & CORS Configuration
+
+The StreamingApp architecture relies on S3 for persistent object storage:
+- The **Admin Service** (`backend/adminService/util/s3.js`) handles video uploads (`multipart/form-data`) and writes video files and thumbnails to S3 using `@aws-sdk/client-s3`.
+- The **Streaming Service** (`backend/streamingService/controllers/streaming.controller.js`) fetches byte ranges from S3 to stream video smoothly to React clients.
+
+#### 1. Created S3 Bucket:
+```bash
+aws s3api create-bucket \
+  --bucket streamingapp-media-675789571925-ap-south-1 \
+  --region ap-south-1 \
+  --create-bucket-configuration LocationConstraint=ap-south-1
+```
+
+**Output:**
+```json
+{
+    "Location": "http://streamingapp-media-675789571925-ap-south-1.s3.amazonaws.com/",
+    "BucketArn": "arn:aws:s3:::streamingapp-media-675789571925-ap-south-1"
+}
+```
+
+#### 2. Configured CORS (Cross-Origin Resource Sharing):
+Because the React frontend runs in browser clients on port 80 / Ingress and makes direct requests to stream media, Cross-Origin Resource Sharing (CORS) is mandatory. Without CORS, the browser blocks video playback due to same-origin policy restrictions.
+
+I applied the following CORS policy:
+```json
+{
+  "CORSRules": [
+    {
+      "AllowedHeaders": ["*"],
+      "AllowedMethods": ["GET", "PUT", "POST", "HEAD"],
+      "AllowedOrigins": ["*"],
+      "ExposeHeaders": ["ETag"]
+    }
+  ]
+}
+```
+
+Applied via AWS CLI:
+```bash
+aws s3api put-bucket-cors \
+  --bucket streamingapp-media-675789571925-ap-south-1 \
+  --cors-configuration file://s3-cors.json
+```
+
+![Figure 3.2: Amazon S3 Bucket Created in AWS Console](screenshots/05-aws-s3-bucket-created.png)
+*Figure 3.2: Verification of the created S3 general-purpose bucket `streamingapp-media-675789571925-ap-south-1` in the AWS Management Console.*
+
+---
+
+### 3.4 Amazon ECR Repository Creation
+
+I created 5 dedicated private container repositories in Amazon ECR for the microservices. I explicitly enabled **Image Vulnerability Scanning on Push** (`scanOnPush=true`) to detect CVEs automatically whenever an image is uploaded:
+
+```bash
+$repos = @(
+  "streamingapp-frontend",
+  "streamingapp-auth",
+  "streamingapp-streaming",
+  "streamingapp-admin",
+  "streamingapp-chat"
+)
+
+foreach ($repo in $repos) {
+    aws ecr create-repository \
+      --repository-name $repo \
+      --image-scanning-configuration scanOnPush=true \
+      --region ap-south-1
+}
+```
+
+#### Verification: Repository URIs
+```bash
+aws ecr describe-repositories --region ap-south-1 --query "repositories[].{Name:repositoryName,URI:repositoryUri}" --output table
+```
+
+**Output:**
+```text
+----------------------------------------------------------------------------------------------------
+|                                       DescribeRepositories                                       |
++-------------------------+------------------------------------------------------------------------+
+|          Name           |                                  URI                                   |
++-------------------------+------------------------------------------------------------------------+
+|  streamingapp-frontend  |  675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-frontend   |
+|  streamingapp-auth      |  675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-auth       |
+|  streamingapp-streaming |  675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-streaming  |
+|  streamingapp-admin     |  675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-admin      |
+|  streamingapp-chat      |  675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-chat       |
++-------------------------+------------------------------------------------------------------------+
+```
+
+![Figure 3.3: Five Dedicated Private ECR Repositories in AWS Console](screenshots/04-created-5-private-aws-ecr-repositories.png)
+*Figure 3.3: The five dedicated private Amazon ECR repositories provisioned in region `ap-south-1` with vulnerability scanning enabled.*
+
+---
+
+### 3.5 Docker Authentication & Image Push to Amazon ECR
+
+#### 1. Authenticated Docker to ECR Registry:
+```bash
+aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 675789571925.dkr.ecr.ap-south-1.amazonaws.com
+```
+*Output:* `Login Succeeded`
+
+#### 2. Built, Tagged and Pushed All 5 Microservices:
+To follow production release best practices, I pushed both an immutable semantic version tag (`v1.0.0`) and the rolling `latest` tag for each service:
+
+```bash
+# 1. Frontend (React 18 + Nginx Stable Alpine)
+docker build -t 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-frontend:v1.0.0 \
+             -t 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-frontend:latest ./frontend
+docker push 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-frontend:v1.0.0
+docker push 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-frontend:latest
+
+# 2. Auth Service (Node.js / Express / JWT)
+docker build -t 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-auth:v1.0.0 \
+             -t 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-auth:latest ./backend/authService
+docker push 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-auth:v1.0.0
+docker push 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-auth:latest
+
+# 3. Streaming Service (Node.js / HLS / S3)
+docker build -t 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-streaming:v1.0.0 \
+             -t 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-streaming:latest ./backend/streamingService
+docker push 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-streaming:v1.0.0
+docker push 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-streaming:latest
+
+# 4. Admin Service (Node.js / S3 Video Uploads)
+docker build -t 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-admin:v1.0.0 \
+             -t 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-admin:latest ./backend/adminService
+docker push 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-admin:v1.0.0
+docker push 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-admin:latest
+
+# 5. Chat Service (Node.js / Socket.IO)
+docker build -t 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-chat:v1.0.0 \
+             -t 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-chat:latest ./backend/chatService
+docker push 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-chat:v1.0.0
+docker push 675789571925.dkr.ecr.ap-south-1.amazonaws.com/streamingapp-chat:latest
+```
+
+#### 3. Verification of Images in ECR:
+I queried the ECR repository image details across all 5 services:
+
+```bash
+$repos = @("streamingapp-frontend", "streamingapp-auth", "streamingapp-streaming", "streamingapp-admin", "streamingapp-chat")
+foreach ($repo in $repos) {
+    Write-Host "=== $repo ==="
+    aws ecr describe-images --repository-name $repo --region ap-south-1 --query "imageDetails[].{Tags:imageTags,Size:imageSizeInBytes}" --output table
+}
+```
+
+**Results:**
+- **`streamingapp-frontend`**: Size ~29.5 MB | Tags: `['v1.0.0', 'latest']`
+- **`streamingapp-auth`**: Size ~56.4 MB | Tags: `['v1.0.0', 'latest']`
+- **`streamingapp-streaming`**: Size ~59.3 MB | Tags: `['v1.0.0', 'latest']`
+- **`streamingapp-admin`**: Size ~59.6 MB | Tags: `['v1.0.0', 'latest']`
+- **`streamingapp-chat`**: Size ~54.8 MB | Tags: `['v1.0.0', 'latest']`
+
+![Figure 3.4: Local Docker Images Tagged for Amazon ECR](screenshots/03-local-docker-image-for-ecr-tag-and-pushed.png)
+*Figure 3.4: Docker Desktop displaying local images tagged with full Amazon ECR registry URIs (`v1.0.0` and `latest`) ready for deployment.*
 
 ---
 
