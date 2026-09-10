@@ -498,9 +498,215 @@ foreach ($repo in $repos) {
 
 ---
 
-## Step 4: Continuous Integration (CI) with Jenkins *(Upcoming)*
+## Step 4: Continuous Integration (CI) with Jenkins
 
-*(Documentation for Jenkins credentials, Declarative Jenkinsfile, GitHub Webhooks, and ECR build/push logs will be recorded here with Pipeline Stage View screenshots).*
+### 4.1 Objective & Architecture
+To automate the build, testing, and deployment lifecycle of our microservices, I configured an automated Continuous Integration (CI) pipeline using the **Shared Academic Jenkins Master** (`https://jenkinsacademics.herovired.com/`).
+
+Because this Jenkins environment is shared across multiple students:
+1. **Isolated Naming Convention:** All credentials and pipeline jobs are explicitly prefixed with my name (`Shashank-StreamingApp-CI`, `Shashank-aws-ecr-credentials`, `Shashank-github-token`) to prevent naming collisions.
+2. **Dedicated ECR Push Destination:** Built images are pushed exclusively to my personal AWS account ECR registry (`675789571925.dkr.ecr.ap-south-1.amazonaws.com`).
+3. **Automated Workspace & Disk Cleanup:** The pipeline executes post-build cleanup (`docker rmi -f`) to prevent filling up the shared Jenkins agent disk.
+
+---
+
+### 4.2 Jenkins Global Credentials Configuration
+
+I registered two dedicated sets of credentials in Jenkins (**Manage Jenkins** $\rightarrow$ **Credentials** $\rightarrow$ **System** $\rightarrow$ **Global credentials**):
+
+1. **AWS ECR Credentials (`Shashank-aws-ecr-credentials`):**
+   - **Kind:** `Username with password`
+   - **Username:** `AKIAZ2WBSQ5KRRKDYE7V`
+   - **Password:** `<AWS_SECRET_ACCESS_KEY>`
+   - **Architecture Decision:** Rather than relying on short-lived AWS IAM Identity Center (SSO) session tokens that expire every few hours, I provisioned access keys for a dedicated IAM service user (`jenkins-ecr-user`) attached to the `Jenkins-ECR-PowerUser-Policy`. This guarantees the CI pipeline never fails due to expired session tokens.
+
+2. **GitHub Access Token (`Shashank-github-token`):**
+   - **Kind:** `Username with password`
+   - **Username:** `Shashankd48`
+   - **Password:** `<GITHUB_PAT>`
+   - **Technical Troubleshooting:** When initially configured as `Secret text`, the Jenkins Git SCM plugin (`hudson.plugins.git.UserRemoteConfig`) filtered the credential out of the repository dropdown. Re-creating it as `Username with password` resolved the compatibility issue with the Git plugin.
+
+![Figure 4.1: Jenkins Global Credentials Configured](screenshots/06-setting-up-jenkins-global-credentials.png)
+*Figure 4.1: Dedicated AWS ECR credentials and GitHub access token stored in the Jenkins Global Credentials store.*
+
+---
+
+### 4.3 Declarative Jenkins Pipeline (`Jenkinsfile`)
+
+I authored a production declarative `Jenkinsfile` in the root of the repository:
+
+```groovy
+pipeline {
+    agent any
+
+    environment {
+        AWS_ACCOUNT_ID = '675789571925'
+        AWS_REGION     = 'ap-south-1'
+        AWS_CRED_ID    = 'Shashank-aws-ecr-credentials'
+        ECR_REGISTRY   = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        IMAGE_TAG      = "${BUILD_NUMBER}-${GIT_COMMIT.take(7)}"
+    }
+
+    options {
+        disableConcurrentBuilds()
+        timeout(time: 25, unit: 'MINUTES')
+    }
+
+    stages {
+        stage('Checkout SCM') {
+            steps {
+                echo "==> [1/5] Checking out source repository from GitHub"
+                checkout scm
+            }
+        }
+
+        stage('Authenticate with Amazon ECR') {
+            steps {
+                echo "==> [2/5] Logging into Amazon ECR Registry: ${ECR_REGISTRY}"
+                withCredentials([usernamePassword(credentialsId: env.AWS_CRED_ID, usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                    sh """
+                        aws ecr get-login-password --region ${AWS_REGION} | \
+                        docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                    """
+                }
+            }
+        }
+
+        stage('Parallel Docker Build') {
+            parallel {
+                stage('Build Frontend') {
+                    steps {
+                        echo "==> [3a/5] Building Frontend React + NGINX Image"
+                        sh """
+                            docker build \
+                              --build-arg REACT_APP_AUTH_API_URL=/api/auth \
+                              --build-arg REACT_APP_STREAMING_API_URL=/api/streaming \
+                              --build-arg REACT_APP_STREAMING_PUBLIC_URL=/api/streaming \
+                              --build-arg REACT_APP_ADMIN_API_URL=/api/admin \
+                              --build-arg REACT_APP_CHAT_API_URL=/api/chat \
+                              --build-arg REACT_APP_CHAT_SOCKET_URL=/ \
+                              -t ${ECR_REGISTRY}/streamingapp-frontend:${IMAGE_TAG} \
+                              -t ${ECR_REGISTRY}/streamingapp-frontend:latest \
+                              ./frontend
+                        """
+                    }
+                }
+
+                stage('Build Auth Service') {
+                    steps {
+                        echo "==> [3b/5] Building Auth Service Image"
+                        sh """
+                            docker build \
+                              -t ${ECR_REGISTRY}/streamingapp-auth:${IMAGE_TAG} \
+                              -t ${ECR_REGISTRY}/streamingapp-auth:latest \
+                              ./backend/authService
+                        """
+                    }
+                }
+
+                stage('Build Streaming Service') {
+                    steps {
+                        echo "==> [3c/5] Building Streaming Service Image"
+                        sh """
+                            docker build \
+                              -t ${ECR_REGISTRY}/streamingapp-streaming:${IMAGE_TAG} \
+                              -t ${ECR_REGISTRY}/streamingapp-streaming:latest \
+                              ./backend/streamingService
+                        """
+                    }
+                }
+
+                stage('Build Admin Service') {
+                    steps {
+                        echo "==> [3d/5] Building Admin Service Image"
+                        sh """
+                            docker build \
+                              -t ${ECR_REGISTRY}/streamingapp-admin:${IMAGE_TAG} \
+                              -t ${ECR_REGISTRY}/streamingapp-admin:latest \
+                              ./backend/adminService
+                        """
+                    }
+                }
+
+                stage('Build Chat Service') {
+                    steps {
+                        echo "==> [3e/5] Building Chat Service Image"
+                        sh """
+                            docker build \
+                              -t ${ECR_REGISTRY}/streamingapp-chat:${IMAGE_TAG} \
+                              -t ${ECR_REGISTRY}/streamingapp-chat:latest \
+                              ./backend/chatService
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Push Images to Amazon ECR') {
+            steps {
+                echo "==> [4/5] Pushing all 5 multi-service images to personal Amazon ECR"
+                sh """
+                    docker push ${ECR_REGISTRY}/streamingapp-frontend:${IMAGE_TAG}
+                    docker push ${ECR_REGISTRY}/streamingapp-frontend:latest
+
+                    docker push ${ECR_REGISTRY}/streamingapp-auth:${IMAGE_TAG}
+                    docker push ${ECR_REGISTRY}/streamingapp-auth:latest
+
+                    docker push ${ECR_REGISTRY}/streamingapp-streaming:${IMAGE_TAG}
+                    docker push ${ECR_REGISTRY}/streamingapp-streaming:latest
+
+                    docker push ${ECR_REGISTRY}/streamingapp-admin:${IMAGE_TAG}
+                    docker push ${ECR_REGISTRY}/streamingapp-admin:latest
+
+                    docker push ${ECR_REGISTRY}/streamingapp-chat:${IMAGE_TAG}
+                    docker push ${ECR_REGISTRY}/streamingapp-chat:latest
+                """
+            }
+        }
+    }
+
+    post {
+        always {
+            echo "==> [5/5] Performing cleanup on shared Jenkins agent disk"
+            sh """
+                docker rmi -f ${ECR_REGISTRY}/streamingapp-frontend:${IMAGE_TAG} || true
+                docker rmi -f ${ECR_REGISTRY}/streamingapp-auth:${IMAGE_TAG} || true
+                docker rmi -f ${ECR_REGISTRY}/streamingapp-streaming:${IMAGE_TAG} || true
+                docker rmi -f ${ECR_REGISTRY}/streamingapp-admin:${IMAGE_TAG} || true
+                docker rmi -f ${ECR_REGISTRY}/streamingapp-chat:${IMAGE_TAG} || true
+            """
+        }
+        success {
+            echo "SUCCESS: All 5 images successfully built, tagged with ${IMAGE_TAG}, and published to ECR!"
+        }
+        failure {
+            echo "FAILURE: Build or push failed. Check console output above for error logs."
+        }
+    }
+}
+```
+
+---
+
+### 4.4 Pipeline Job Configuration
+
+In the Jenkins web interface, I created a new **Pipeline** item named `Shashank-StreamingApp-CI`:
+- **Repository URL:** `https://github.com/Shashankd48/StreamingApp.git`
+- **Credentials:** `Shashankd48/****** (GitHub PAT for Shashank)`
+- **Branch Specifier:** `*/main`
+- **Script Path:** `Jenkinsfile`
+- **Triggers:** Configured GitHub hook trigger with Poll SCM fallback (`H/5 * * * *`).
+
+![Figure 4.2: Jenkins Pipeline SCM Configuration](screenshots/07-setting-up-jenkins-pipeline.png)
+*Figure 4.2: Pipeline configuration pointing to the GitHub repository fork, branch `main`, and `Jenkinsfile`.*
+
+---
+
+### 4.5 Pipeline Execution & Stage View
+
+*(Insert Stage View screenshot and build console verification here upon completion of Build #1)*
+
+---
 
 ---
 
