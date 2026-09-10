@@ -516,14 +516,14 @@ I registered two dedicated sets of credentials in Jenkins (**Manage Jenkins** $\
 
 1. **AWS ECR Credentials (`Shashank-aws-ecr-credentials`):**
    - **Kind:** `Username with password`
-   - **Username:** `AKIAZ2WBSQ5KRRKDYE7V`
-   - **Password:** `<AWS_SECRET_ACCESS_KEY>`
+   - **Username:** `AKIAZ2WBSQ5K...` (Access Key ID of `jenkins-ecr-user`)
+   - **Password:** `<AWS_SECRET_ACCESS_KEY>` (Secret Access Key securely masked)
    - **Architecture Decision:** Rather than relying on short-lived AWS IAM Identity Center (SSO) session tokens that expire every few hours, I provisioned access keys for a dedicated IAM service user (`jenkins-ecr-user`) attached to the `Jenkins-ECR-PowerUser-Policy`. This guarantees the CI pipeline never fails due to expired session tokens.
 
 2. **GitHub Access Token (`Shashank-github-token`):**
    - **Kind:** `Username with password`
-   - **Username:** `Shashankd48`
-   - **Password:** `<GITHUB_PAT>`
+   - **Username:** `Shashankd48` (GitHub Username)
+   - **Password:** `<GITHUB_PAT>` (Personal Access Token securely masked)
    - **Technical Troubleshooting:** When initially configured as `Secret text`, the Jenkins Git SCM plugin (`hudson.plugins.git.UserRemoteConfig`) filtered the credential out of the repository dropdown. Re-creating it as `Username with password` resolved the compatibility issue with the Git plugin.
 
 ![Figure 4.1: Jenkins Global Credentials Configured](screenshots/06-setting-up-jenkins-global-credentials.png)
