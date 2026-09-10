@@ -702,11 +702,63 @@ In the Jenkins web interface, I created a new **Pipeline** item named `Shashank-
 
 ---
 
-### 4.5 Pipeline Execution & Stage View
+### 4.5 Pipeline Execution, Stage View & Timing Analysis
 
-*(Insert Stage View screenshot and build console verification here upon completion of Build #1)*
+I triggered the pipeline in Jenkins, and **Build #3 completed with 100% SUCCESS** across all stages:
 
----
+![Figure 4.3: Jenkins Pipeline Stages Graph](screenshots/08-first-jenkins-pipeline-ran-successfully.png)
+*Figure 4.3: End-to-end execution graph of build #3 showing all 5 parallel microservice build branches, authentication, and image pushing turning green.*
+
+#### Stage Duration Breakdown:
+| Stage Name | Duration | Description |
+| :--- | :--- | :--- |
+| **Checkout SCM** | `1s` | Cloned `https://github.com/Shashankd48/StreamingApp.git` on branch `main`. |
+| **Authenticate with Amazon ECR** | `4s` | Retrieved AWS ECR login token and authenticated Docker daemon. |
+| **Parallel: Build Frontend** | `7m 17s` | Multi-stage Docker build: downloaded 1,622 npm packages, ran Webpack/Babel production compilation, and packaged into `nginx:stable-alpine`. |
+| **Parallel: Build Auth Service** | `1m 09s` | Single-stage Node.js build with production dependencies. |
+| **Parallel: Build Streaming Service**| `1m 50s` | Single-stage Node.js build with video chunking dependencies. |
+| **Parallel: Build Admin Service** | `1m 40s` | Single-stage Node.js build with AWS S3 SDK. |
+| **Parallel: Build Chat Service** | `1m 01s` | Single-stage Node.js build with Socket.IO dependencies. |
+| **Push Images to Amazon ECR** | `36s` | Pushed all 5 microservices (dual-tagged with build commit and `latest`) to ECR. |
+| **Declarative: Post Actions** | `743ms` | Cleaned up local image layers on the shared agent disk (`docker rmi -f`). |
+| **Total Pipeline Wall Clock Time** | **`~8m 11s`** | Entire automated build, test, package, and push workflow completed. |
+
+![Figure 4.4: Jenkins Pipeline Stage View Table with Stage Durations](screenshots/09-pipeline-stages-overview-and-time-taken.png)
+*Figure 4.4: Classic Jenkins Stage View displaying individual stage execution durations, confirming parallel microservice build times and total pipeline execution.*
+
+#### Architectural Analysis: Why the Frontend Build Took Longer
+As observed in the stage view, the **Frontend** stage took **7 minutes 17 seconds**, whereas each backend service completed in approximately **1 minute**:
+1. **Interpreted Node.js vs. Compiled React Bundle:**
+   - The backend services are straightforward Express APIs that only install a handful of runtime libraries (`npm install --production`) and execute raw JavaScript at runtime.
+   - The frontend is a React 18 Single Page Application (SPA). During `npm install`, it pulls 1,622 packages including the entire build toolchain (Webpack, Babel compiler, PostCSS, ESLint, React-Scripts).
+   - During `npm run build` (`react-scripts build`), Webpack parses all JSX components, transpiles modern ES6+ into browser-compatible JavaScript, optimizes chunks, and minifies CSS/JS assets. On a shared cloud Jenkins VM with constrained vCPUs, this CPU-intensive bundling process typically requires several minutes.
+2. **Efficiency of Parallel Execution:**
+   - Because our `Jenkinsfile` utilized a `parallel { ... }` block, all four backend microservices built concurrently on separate threads while the frontend was compiling.
+   - Had these 5 services run sequentially (one after another), the pipeline would have taken nearly **13 minutes** ($7\text{m } 17\text{s} + 1\text{m } 09\text{s} + 1\text{m } 50\text{s} + 1\text{m } 40\text{s} + 1\text{m } 01\text{s}$). The parallel design reduced total pipeline duration to just **8 minutes 11 seconds**.
+
+#### Verification of Newly Published Images in Amazon ECR
+To verify that the Jenkins CI pipeline actually published the newly built container images to my private registry, I queried the `streamingapp-frontend` repository in `ap-south-1`:
+
+```bash
+aws ecr describe-images \
+  --repository-name streamingapp-frontend \
+  --region ap-south-1 \
+  --query "imageDetails[].{Tags:imageTags,PushedAt:imagePushedAt}" \
+  --output table
+```
+
+**Output:**
+```text
+-----------------------------------------------------------------
+|                        DescribeImages                         |
++-----------------------------------+---------------------------+
+|             PushedAt              |           Tags            |
++-----------------------------------+---------------------------+
+|  2026-09-10T09:23:13.651000+05:30 |  ['v1.0.0']               |
+|  2026-09-10T17:59:59.742000+05:30 |  ['latest', '3-c75009d']  |
++-----------------------------------+---------------------------+
+```
+Both the build commit tag (`3-c75009d`) and the rolling `latest` tag were successfully published by Jenkins!
 
 ---
 
