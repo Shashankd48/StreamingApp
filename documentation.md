@@ -367,15 +367,22 @@ I applied the following CORS policy:
 }
 ```
 
-Applied via AWS CLI:
+Applied via AWS CLI (using the policy file stored in `infra/s3-cors.json`):
 ```bash
 aws s3api put-bucket-cors \
   --bucket streamingapp-media-675789571925-ap-south-1 \
-  --cors-configuration file://s3-cors.json
+  --cors-configuration file://infra/s3-cors.json
 ```
 
 ![Figure 3.2: Amazon S3 Bucket Created in AWS Console](screenshots/05-aws-s3-bucket-created.png)
 *Figure 3.2: Verification of the created S3 general-purpose bucket `streamingapp-media-675789571925-ap-south-1` in the AWS Management Console.*
+
+> **DevOps Artifacts in `infra/`:**  
+> All configuration files and provisioning scripts are permanently version-controlled in the [infra/](file:///d:/Study/HeroVired/assignments/Orchestration%20and%20Scaling/infra) directory:
+> - `infra/s3-cors.json`: Declarative CORS specification applied to the S3 bucket.
+> - `infra/setup-s3-bucket.ps1` / `.sh`: Repeatable automation script to create the S3 bucket and apply CORS.
+> - `infra/setup-ecr-repositories.ps1` / `.sh`: Repeatable automation script to provision all 5 private ECR repositories.
+> - `infra/build-and-push-ecr.ps1` / `.sh`: Repeatable automation script to authenticate Docker, tag, and push all microservice images.
 
 ---
 
