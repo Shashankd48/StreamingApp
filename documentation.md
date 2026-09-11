@@ -1845,6 +1845,12 @@ aws sns subscribe `
   --notification-endpoint "shashankd48+HV17@gmail.com"
 ```
 
+![Figure 9.1: Amazon SNS Email Subscription Confirmation](screenshots/26-aws-sns-email-subscription-confirmation.png)
+*Figure 9.1: AWS SNS automated subscription confirmation email received by the team endpoint to authorize deployment notifications.*
+
+![Figure 9.2: Amazon SNS Subscription Confirmed Successfully](screenshots/27-aws-sns-email-subscription-confirmed.png)
+*Figure 9.2: AWS SNS confirmation page verifying active subscription ID `3f71305c-c978-46fc-b39b-47f1ce555618` linked to `StreamingApp-Deployment-Events`.*
+
 #### 2. ChatOps Webhook Payload Schema:
 For integration with Slack, Microsoft Teams, or Telegram webhooks, events are dispatched in structured JSON:
 ```json
