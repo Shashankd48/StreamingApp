@@ -1,0 +1,117 @@
+{{- if .Values.ingress.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "streaming-app.fullname" . }}-ingress
+  labels:
+    {{- include "streaming-app.labels" . | nindent 4 }}
+  annotations:
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - http:
+        paths:
+          - path: /api/admin
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "streaming-app.fullname" . }}-admin
+                port:
+                  number: {{ .Values.adminService.port }}
+          - path: /api/chat
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "streaming-app.fullname" . }}-chat
+                port:
+                  number: {{ .Values.chatService.port }}
+          - path: /socket.io
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "streaming-app.fullname" . }}-chat
+                port:
+                  number: {{ .Values.chatService.port }}
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "streaming-app.fullname" . }}-frontend
+                port:
+                  number: {{ .Values.frontend.port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "streaming-app.fullname" . }}-auth-ingress
+  labels:
+    {{- include "streaming-app.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /api/$2
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - http:
+        paths:
+          - path: /api/auth(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "streaming-app.fullname" . }}-auth
+                port:
+                  number: {{ .Values.authService.port }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "streaming-app.fullname" . }}-streaming-ingress
+  labels:
+    {{- include "streaming-app.labels" . | nindent 4 }}
+  annotations:
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /api/streaming/$2
+    {{- toYaml .Values.ingress.annotations | nindent 4 }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    - http:
+        paths:
+          - path: /api/streaming/api/streaming/api/streaming(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "streaming-app.fullname" . }}-streaming
+                port:
+                  number: {{ .Values.streamingService.port }}
+          - path: /api/streaming/streaming/streaming(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "streaming-app.fullname" . }}-streaming
+                port:
+                  number: {{ .Values.streamingService.port }}
+          - path: /api/streaming/api/streaming(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "streaming-app.fullname" . }}-streaming
+                port:
+                  number: {{ .Values.streamingService.port }}
+          - path: /api/streaming/streaming(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "streaming-app.fullname" . }}-streaming
+                port:
+                  number: {{ .Values.streamingService.port }}
+          - path: /api/streaming(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: {{ include "streaming-app.fullname" . }}-streaming
+                port:
+                  number: {{ .Values.streamingService.port }}
+{{- end }}

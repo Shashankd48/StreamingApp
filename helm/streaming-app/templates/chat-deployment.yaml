@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "streaming-app.fullname" . }}-chat
+  labels:
+    {{- include "streaming-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chat
+spec:
+  replicas: {{ .Values.chatService.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "streaming-app.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: chat
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "streaming-app.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: chat
+    spec:
+      containers:
+        - name: chat-service
+          image: "{{ .Values.global.imageRegistry }}/{{ .Values.chatService.image }}:{{ .Values.global.imageTag }}"
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.chatService.port }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "streaming-app.fullname" . }}-config
+            - secretRef:
+                name: {{ include "streaming-app.fullname" . }}-secret
+          env:
+            - name: PORT
+              value: {{ .Values.chatService.port | quote }}
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.chatService.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "streaming-app.fullname" . }}-chat
+  labels:
+    {{- include "streaming-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: chat
+spec:
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.chatService.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: {{ include "streaming-app.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: chat

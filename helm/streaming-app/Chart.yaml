@@ -1,0 +1,9 @@
+apiVersion: v2
+name: streaming-app
+description: Production Helm chart for StreamingApp MERN microservices on Amazon EKS
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: Shashank Dubey
+    email: shashankd48+HV17@gmail.com

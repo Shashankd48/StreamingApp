@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "streaming-app.fullname" . }}-config
+  labels:
+    {{- include "streaming-app.labels" . | nindent 4 }}
+data:
+  NODE_ENV: "production"
+  AWS_REGION: {{ .Values.global.awsRegion | quote }}
+  AWS_S3_BUCKET: {{ .Values.global.s3Bucket | quote }}
+  AWS_BUCKET_NAME: {{ .Values.global.s3Bucket | quote }}
+  CLIENT_URLS: {{ .Values.global.clientUrls | quote }}
+  MONGO_URI: "mongodb://{{ include "streaming-app.fullname" . }}-mongodb:27017/streamingapp"
+  STREAMING_PUBLIC_URL: "/api/streaming"
+  AUTH_SERVICE_URL: "http://{{ include "streaming-app.fullname" . }}-auth:3001"
+  STREAMING_SERVICE_URL: "http://{{ include "streaming-app.fullname" . }}-streaming:3002"
+  ADMIN_SERVICE_URL: "http://{{ include "streaming-app.fullname" . }}-admin:3003"
+  CHAT_SERVICE_URL: "http://{{ include "streaming-app.fullname" . }}-chat:3004"
