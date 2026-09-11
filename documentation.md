@@ -1869,24 +1869,71 @@ For integration with Slack, Microsoft Teams, or Telegram webhooks, events are di
 
 ---
 
-### 9.4 Real-Time Deployment Event Dispatch Verification
+### 9.4 Real-Time Deployment & Observability Event Dispatch Verification
 
-To verify end-to-end notification delivery, a live deployment event was dispatched via the AWS CLI:
+To verify end-to-end notification delivery across the complete operational lifecycle, live notifications were dispatched and confirmed received in the recipient's Gmail inbox (**`shashankd48+HV17@gmail.com`**):
 
+#### 1. Subscription Activation & Baseline Verification:
+The initial verification test dispatched via the AWS CLI:
 ```powershell
 aws sns publish `
   --topic-arn "arn:aws:sns:ap-south-1:675789571925:StreamingApp-Deployment-Events" `
-  --subject "StreamingApp Deployment Success" `
-  --message "Deployment SUCCESS: Cluster streamingapp-eks Revision 6 deployed successfully. All 8 pods Healthy. Ingress: http://a58ecf898ca284bbf9056d00d934692a-1428735725.ap-south-1.elb.amazonaws.com"
+  --subject "[TEST] StreamingApp Alerts Active" `
+  --message "Hello Shashank! Your Amazon SNS subscription is active. You will now receive notifications for code deployments (success/failure) and cluster metric alarms."
 ```
 
-#### Verification:
-```json
-{
-    "MessageId": "a9c68351-95d3-559e-a7dd-e04c2ff20a7a"
-}
+![Figure 9.3: Amazon SNS Test Email Received in Inbox](screenshots/28-sns-test-email-status-active.png)
+*Figure 9.3: Live subscription verification notification received from `AWS Notifications <no-reply@sns.amazonaws.com>` confirming the email channel is operational.*
+
+---
+
+#### 2. Automated CI/CD Pipeline Deployment Notifications:
+
+Whenever a Git commit triggers a build on Jenkins, the declarative pipeline's `post` stage broadcasts real-time status alerts:
+
+##### A. Successful Deployment Notification:
+```powershell
+# Executed by Jenkins post { success { ... } }
+aws sns publish `
+  --topic-arn "arn:aws:sns:ap-south-1:675789571925:StreamingApp-Deployment-Events" `
+  --subject "[SUCCESS] StreamingApp Build #14 Deployed" `
+  --message "Pipeline Build #14 succeeded! All 5 images tagged (14-b980679) and published to Amazon ECR. Cluster: streamingapp-eks. Ingress: http://a58ecf898ca284bbf9056d00d934692a-1428735725.ap-south-1.elb.amazonaws.com"
 ```
-The message was published with confirmation ID `a9c68351-95d3-559e-a7dd-e04c2ff20a7a`, successfully delivering the deployment alert to configured subscriber endpoints.
+
+![Figure 9.4: Jenkins Pipeline Deployment Success Email Alert](screenshots/29-sns-email-pipeline-build-deployed-successfully.png)
+*Figure 9.4: Automated build success alert delivered to the team endpoint confirming successful image packaging, ECR publishing, and EKS rollout.*
+
+##### B. Deployment Failure & Rollback Notification:
+```powershell
+# Executed by Jenkins post { failure { ... } }
+aws sns publish `
+  --topic-arn "arn:aws:sns:ap-south-1:675789571925:StreamingApp-Deployment-Events" `
+  --subject "[FAILURE] StreamingApp Build #15 Failed" `
+  --message "Pipeline Build #15 FAILED! Stage error encountered: Building Backend Services (authService). Rollback initiated. Please check Jenkins console output."
+```
+
+![Figure 9.5: Jenkins Pipeline Deployment Failure Email Alert](screenshots/30-sns-email-pipeline-build-deployment-failure.png)
+*Figure 9.5: Critical deployment failure alert delivered to notify on-call engineers of build breakages and stage execution errors.*
+
+---
+
+#### 3. CloudWatch Metric Alarm Infrastructure Notifications:
+
+Both production CloudWatch metric alarms created in **Step 6** are linked directly to `StreamingApp-Deployment-Events` as their alarm actions. When operational metrics exceed designated thresholds, CloudWatch automatically dispatches infrastructure incident emails:
+
+##### A. High Worker Node CPU Alarm (`StreamingApp-EKS-High-Node-CPU`):
+- **Condition:** Average CPU utilization $\ge 80\%$ across worker nodes for 10 consecutive minutes.
+- **Incident Dispatch:**
+
+![Figure 9.6: CloudWatch High Worker Node CPU Metric Alarm Alert](screenshots/31-sns-cloudwatch-alarm-high-node-cpu.png)
+*Figure 9.6: Automated CloudWatch incident notification alerting engineers that the EKS worker node group crossed the 80% CPU utilization threshold.*
+
+##### B. High 5XX Ingress Server Errors Alarm (`StreamingApp-ELB-High-5XX-Errors`):
+- **Condition:** $\ge 5$ HTTP 5XX server errors recorded by the Application Load Balancer within a 5-minute window.
+- **Incident Dispatch:**
+
+![Figure 9.7: CloudWatch Ingress 5XX Server Errors Metric Alarm Alert](screenshots/32-sns-cloudwatch-alarm-high-5xx-errors.png)
+*Figure 9.7: Automated CloudWatch high-severity alarm notification indicating backend 5XX errors detected at the ingress tier.*
 
 ---
 
