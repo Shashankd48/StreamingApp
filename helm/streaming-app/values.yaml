@@ -13,6 +13,10 @@ mongodb:
   enabled: true
   image: mongo:6.0
   port: 27017
+  persistence:
+    enabled: true
+    storageClass: ebs-gp3-sc
+    size: 5Gi
   resources:
     requests:
       cpu: 100m

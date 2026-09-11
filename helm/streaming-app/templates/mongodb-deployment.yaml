@@ -35,7 +35,29 @@ spec:
               mountPath: /data/db
       volumes:
         - name: mongodata
+          {{- if and .Values.mongodb.enabled .Values.mongodb.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "streaming-app.fullname" . }}-mongodb-pvc
+          {{- else }}
           emptyDir: {}
+          {{- end }}
+{{- if and .Values.mongodb.enabled .Values.mongodb.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "streaming-app.fullname" . }}-mongodb-pvc
+  labels:
+    {{- include "streaming-app.labels" . | nindent 4 }}
+    app.kubernetes.io/component: mongodb
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.mongodb.persistence.storageClass | default "ebs-gp3-sc" }}
+  resources:
+    requests:
+      storage: {{ .Values.mongodb.persistence.size | default "5Gi" }}
+{{- end }}
 ---
 apiVersion: v1
 kind: Service
