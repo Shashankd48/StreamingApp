@@ -1398,12 +1398,20 @@ The platform comprises five containerized microservices and one stateful databas
 
 | Component | Technology Stack | Internal Port | Ingress Route Pattern | Scaling Profile | Persistent Storage |
 |:---|:---|:---:|:---|:---:|:---|
-| **Frontend** | React 18, React Router v6, NGINX Stable Alpine | `80` | `/` | HPA (2 &ndash; 5 pods, 50% CPU) | Stateless |
-| **Auth Service** | Node.js, Express, bcrypt, JSON Web Token (JWT) | `3001` | `/api/auth(/|$)(.*)` | Static (1 pod) | MongoDB `users` collection |
-| **Streaming Service** | Node.js, Express, AWS SDK v3, HTTP Byte-Range | `5000` | `/api/streaming(/|$)(.*)` | HPA (2 &ndash; 6 pods, 60% CPU) | Amazon S3 & MongoDB `videos` |
-| **Admin Service** | Node.js, Express, Multer, AWS SDK S3 Uploads | `5001` | `/api/admin(/|$)(.*)` | Static (1 pod) | Amazon S3 & MongoDB `videos` |
-| **Chat Service** | Node.js, Express, Socket.IO, WebSockets | `5002` | `/api/chat(/|$)(.*)` | Static (1 pod) | MongoDB `messages` collection |
-| **Database** | MongoDB 6.0 Official Image | `27017` | *Internal Only* (`streaming-app-mongodb:27017`) | Single Replica | AWS EBS `gp3` 5Gi PersistentVolume |
+| **Frontend** | React 18, React Router v6, NGINX Stable Alpine | `80` | `/` | **Dynamic HPA** (2 &ndash; 5 pods, 50% CPU) | Stateless |
+| **Auth Service** | Node.js, Express, bcrypt, JSON Web Token (JWT) | `3001` | `/api/auth/*` | **Fixed** (1 pod) | MongoDB `users` collection |
+| **Streaming Service** | Node.js, Express, AWS SDK v3, HTTP Byte-Range | `5000` | `/api/streaming/*` | **Dynamic HPA** (2 &ndash; 6 pods, 60% CPU) | Amazon S3 & MongoDB `videos` |
+| **Admin Service** | Node.js, Express, Multer, AWS SDK S3 Uploads | `5001` | `/api/admin/*` | **Fixed** (1 pod) | Amazon S3 & MongoDB `videos` |
+| **Chat Service** | Node.js, Express, Socket.IO, WebSockets | `5002` | `/api/chat/*` | **Fixed** (1 pod) | MongoDB `messages` collection |
+| **Database** | MongoDB 6.0 Official Image | `27017` | *Internal Only* (`streaming-app-mongodb:27017`) | **Single Replica** | AWS EBS `gp3` 5Gi PersistentVolume |
+
+> [!NOTE]
+> **Architectural Rationale: Why Some Pods Are Dynamic (HPA) While Others Are Fixed (1 Pod):**
+> 1. **High-Throughput Workloads (Frontend & Streaming &rarr; Dynamic HPA):** These services absorb 95%+ of all incoming user traffic. Video streaming involves continuous HTTP byte-range slicing and piping S3 streams, consuming variable CPU. Autoscaling them from 2 to 5–6 replicas ensures low latency under traffic spikes while conserving idle resources.
+> 2. **Low-Frequency Stateless Operations (Auth & Admin &rarr; Fixed 1 Replica):** User authentication occurs only once at login to obtain a signed JWT token; subsequent API requests validate the token statelessly without calling Auth again. The Admin Studio is used solely by administrators to upload videos. A single Node.js container easily handles hundreds of requests per second for these workflows.
+> 3. **WebSocket In-Memory State (Chat Service &rarr; Fixed 1 Replica):** Real-time Socket.IO WebSockets maintain active in-memory TCP socket connections. Scaling WebSockets across multiple pods requires an external distributed message broker (such as a Redis Pub/Sub adapter) so users on pod A can receive messages from users on pod B. A single replica cleanly preserves watch-room chat synchronization without Redis operational overhead.
+> 4. **Block Storage Constraints (MongoDB &rarr; Single Stateful Replica):** The database mounts an AWS EBS `gp3` volume (`vol-09ee6f750e5fcff05`), which is a `ReadWriteOnce` (RWO) block device. An EBS volume can only attach to one EC2 instance at a time. Horizontal scaling for MongoDB requires a multi-node ReplicaSet with multiple EBS volumes.
+> 5. **Worker Node Capacity Optimization:** The cluster runs on 2 &times; `t3.medium` instances (4 vCPUs, 8GB RAM). Limiting autoscaling to high-traffic components ensures the cluster remains comfortably within node compute and AWS ENI pod IP allocation limits.
 
 #### Core Network Interaction Protocols:
 1. **User Authentication Flow**:
