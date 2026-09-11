@@ -145,9 +145,27 @@ pipeline {
         }
         success {
             echo "SUCCESS: All 5 images successfully built, tagged with ${IMAGE_TAG}, and published to ECR!"
+            withCredentials([usernamePassword(credentialsId: env.AWS_CRED_ID, usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                sh """
+                    aws sns publish \
+                        --region ${AWS_REGION} \
+                        --topic-arn "arn:aws:sns:ap-south-1:675789571925:StreamingApp-Deployment-Events" \
+                        --subject "[SUCCESS] StreamingApp Build #${BUILD_NUMBER} Deployed" \
+                        --message "Pipeline Build #${BUILD_NUMBER} succeeded! All 5 images tagged (${IMAGE_TAG}) and published to Amazon ECR. Commit: ${GIT_COMMIT}." || true
+                """
+            }
         }
         failure {
             echo "FAILURE: Build or push failed. Check console output above for error logs."
+            withCredentials([usernamePassword(credentialsId: env.AWS_CRED_ID, usernameVariable: 'AWS_ACCESS_KEY_ID', passwordVariable: 'AWS_SECRET_ACCESS_KEY')]) {
+                sh """
+                    aws sns publish \
+                        --region ${AWS_REGION} \
+                        --topic-arn "arn:aws:sns:ap-south-1:675789571925:StreamingApp-Deployment-Events" \
+                        --subject "[FAILURE] StreamingApp Build #${BUILD_NUMBER} Failed" \
+                        --message "Pipeline Build #${BUILD_NUMBER} FAILED! Stage error encountered. Please check Jenkins console output for details. Commit: ${GIT_COMMIT}." || true
+                """
+            }
         }
     }
 }
