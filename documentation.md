@@ -1096,9 +1096,206 @@ Inspecting the Chrome DevTools Network panel confirms that the video is delivere
 
 ---
 
-## Step 6: Observability (Monitoring & Logging) *(Upcoming)*
+## Step 6: Observability (Monitoring & Logging with Amazon CloudWatch)
 
-*(Documentation for CloudWatch Container Insights, Fluent Bit log aggregation, and metric alarms will be recorded here with CloudWatch dashboard screenshots).*
+### 6.1 Objective & Observability Architecture
+
+In modern cloud-native microservices, failures are rarely binary; they manifest as latency spikes, memory leaks, intermittent HTTP 5xx errors, or quiet container restarts. To ensure enterprise reliability for **StreamingApp**, I implemented a unified observability architecture built on the three pillars of telemetry:
+
+1. **Metrics (Performance Telemetry):** Automated collection of compute, memory, disk, and network metrics from cluster nodes and individual application pods via the CloudWatch Agent.
+2. **Centralized Logging (Event Telemetry):** Aggregation of all container stdout/stderr log streams into Amazon CloudWatch Logs via a high-throughput Fluent Bit daemon.
+3. **Automated Alerting (Actionable Telemetry):** CloudWatch Metric Alarms monitoring resource saturation and application error thresholds to enable proactive incident response.
+
+```
+                  +-------------------------------------------------------------+
+                  |               Amazon EKS Cluster (streamingapp-eks)         |
+                  |                                                             |
+                  |   +-----------------------+     +-----------------------+   |
+                  |   |     Worker Node 1     |     |     Worker Node 2     |   |
+                  |   |      (t3.medium)      |     |      (t3.medium)      |   |
+                  |   |                       |     |                       |   |
+                  |   | [CloudWatch Agent DS] |     | [CloudWatch Agent DS] |   |
+                  |   | [Fluent Bit DaemonSet]|     | [Fluent Bit DaemonSet]|   |
+                  |   +-----------+-----------+     +-----------+-----------+   |
+                  +---------------+-----------------------------+---------------+
+                                  |                             |
+                       Container  |                  Container  |
+                       Metrics    |                  Logs       |
+                                  v                             v
+                  +-------------------------------------------------------------+
+                  |                      Amazon CloudWatch                      |
+                  |                                                             |
+                  |  1. Container Insights (Cluster Performance Dashboards)     |
+                  |  2. Centralized Logs (/aws/containerinsights/.../application)
+                  |  3. CloudWatch Logs Insights (High-Speed Analytical Queries)|
+                  |  4. CloudWatch Metric Alarms (Node CPU & 5xx Thresholds)    |
+                  +-------------------------------------------------------------+
+```
+
+---
+
+### 6.2 IAM Permission Configuration for Worker Nodes
+
+To allow the EKS worker nodes to securely ship metrics and logs to Amazon CloudWatch without hardcoding access keys in container manifests, I attached the AWS-managed policy `CloudWatchAgentServerPolicy` directly to the EC2 Node Instance Role:
+
+```bash
+aws iam attach-role-policy \
+  --role-name eksctl-streamingapp-eks-nodegroup--NodeInstanceRole-TaABIKBWmt04 \
+  --policy-arn arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+```
+
+#### Verification of Attached IAM Policies:
+```text
+-----------------------------------------------------------------------------------------------------------
+|                                        ListAttachedRolePolicies                                         |
++---------------------------------------------------------------------------------------------------------+
+||                                           AttachedPolicies                                            ||
+|+----------------------------------------------------------------+--------------------------------------+|
+||                            PolicyArn                           |             PolicyName               ||
+|+----------------------------------------------------------------+--------------------------------------+|
+||  arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy           |  CloudWatchAgentServerPolicy         ||
+||  arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore          |  AmazonSSMManagedInstanceCore        ||
+||  arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy             |  AmazonEKSWorkerNodePolicy           ||
+||  arn:aws:iam::aws:policy/AmazonS3FullAccess                    |  AmazonS3FullAccess                  ||
+||  arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly    |  AmazonEC2ContainerRegistryPullOnly  ||
+||  arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy |  AmazonEBSCSIDriverPolicy            ||
+|+----------------------------------------------------------------+--------------------------------------+|
+```
+
+---
+
+### 6.3 Deployment of Amazon CloudWatch Observability EKS Add-on
+
+Rather than manually crafting fragmented DaemonSets, I deployed the official AWS **`amazon-cloudwatch-observability`** EKS add-on (version `v6.6.0-eksbuild.1`), which deploys an optimized OpenTelemetry-based CloudWatch Agent and Fluent Bit collector:
+
+```bash
+aws eks create-addon \
+  --cluster-name streamingapp-eks \
+  --addon-name amazon-cloudwatch-observability \
+  --region ap-south-1
+```
+
+#### Verification 1: Add-on Status Active (`aws eks describe-addon`)
+```json
+{
+    "status": "ACTIVE",
+    "health": {
+        "issues": []
+    }
+}
+```
+
+#### Verification 2: DaemonSet Pods Running Across All Worker Nodes (`kubectl get pods -n amazon-cloudwatch`)
+```text
+NAME                                                              READY   STATUS    RESTARTS   AGE   IP               NODE
+amazon-cloudwatch-observability-controller-manager-78b9495vpclv   1/1     Running   0          5m    192.168.78.58    ip-192-168-85-150.ap-south-1.compute.internal
+cloudwatch-agent-6mhfv                                            1/1     Running   0          5m    192.168.45.153   ip-192-168-45-153.ap-south-1.compute.internal
+cloudwatch-agent-kxws7                                            1/1     Running   0          5m    192.168.85.150   ip-192-168-85-150.ap-south-1.compute.internal
+fluent-bit-5h2hp                                                  1/1     Running   0          5m    192.168.85.150   ip-192-168-85-150.ap-south-1.compute.internal
+fluent-bit-79klj                                                  1/1     Running   0          5m    192.168.45.153   ip-192-168-45-153.ap-south-1.compute.internal
+```
+100% of telemetry collectors initialized successfully across both worker nodes in availability zones `ap-south-1a` and `ap-south-1b`.
+
+---
+
+### 6.4 Centralized Log Aggregation in Amazon CloudWatch Logs
+
+Fluent Bit automatically tails container logs from `/var/log/containers/*.log` on the host, parses container metadata, and publishes to three dedicated CloudWatch Log Groups:
+
+1. **`/aws/containerinsights/streamingapp-eks/application`**: Centralizes stdout/stderr from all application microservices (`frontend`, `streaming`, `auth`, `admin`, `chat`, `mongodb`, and `ingress-nginx`).
+2. **`/aws/containerinsights/streamingapp-eks/dataplane`**: Centralizes system container logs (`containerd`, `kubelet`, `kube-proxy`).
+3. **`/aws/containerinsights/streamingapp-eks/host`**: Centralizes node-level system audit logs (`audit.log`, `messages`, `secure`).
+
+```bash
+aws logs describe-log-groups --log-group-name-prefix "/aws/containerinsights/streamingapp-eks" --region ap-south-1 --query "logGroups[].logGroupName" --output table
+```
+
+**Output:**
+```text
+---------------------------------------------------------
+|                   DescribeLogGroups                   |
++-------------------------------------------------------+
+|  /aws/containerinsights/streamingapp-eks/application  |
+|  /aws/containerinsights/streamingapp-eks/dataplane    |
+|  /aws/containerinsights/streamingapp-eks/host         |
++-------------------------------------------------------+
+```
+
+![Figure 6.1: Amazon CloudWatch Container Insights Log Groups](screenshots/22-cloudwatch-log-groups-container-insights.png)
+*Figure 6.1: The three centralized log groups automatically created and populated by the Fluent Bit collector in region `ap-south-1`.*
+
+---
+
+### 6.5 Real-Time Log Analytics with CloudWatch Logs Insights
+
+To demonstrate practical operational troubleshooting, I authored an analytical query in **CloudWatch Logs Insights** to scan and correlate events across our microservice containers:
+
+```sql
+fields @timestamp, log, kubernetes.pod_name, kubernetes.container_name
+| filter kubernetes.namespace_name = "default"
+| sort @timestamp desc
+| limit 20
+```
+
+#### Query Results from AWS CLI / CloudWatch:
+```text
+Scanned: 6,595 records in 1 log group | Status: Complete
+
+@timestamp              log                                                                kubernetes.pod_name                      kubernetes.container_name
+2026-09-11 04:50:33     "GET / HTTP/1.1" 200 645 "-" "kube-probe/1.31"                    streaming-app-frontend-5d54d7cbc8-jh227  frontend
+2026-09-11 04:50:31     Chat user connected: demo@gmail.com                                streaming-app-chat-57b9fcfd57-fknn9      chat-service
+2026-09-11 04:50:29     GET /api/health 200 0.227 ms - 47                                  streaming-app-chat-57b9fcfd57-fknn9      chat-service
+2026-09-11 04:50:29     GET /api/health 200 0.254 ms - 48                                  streaming-app-admin-6dbfc4f546-zqwbp     admin-service
+2026-09-11 04:50:28     "GET / HTTP/1.1" 200 645 "-" "kube-probe/1.31"                    streaming-app-frontend-5d54d7cbc8-cxjgx  frontend
+```
+
+![Figure 6.2: CloudWatch Logs Insights Analytical Query Execution](screenshots/23-cloudwatch-logs-insights-query.png)
+*Figure 6.2: CloudWatch Logs Insights executing real-time queries across microservice logs, capturing HTTP health probes and user authentication events.*
+
+![Figure 6.2b: CloudWatch Logs Insights Discovered Container Events](screenshots/23-cloudwatch-logs-insights-query-2.png)
+*Figure 6.2b: Discovered container streams and JSON structured log events displaying live microservice traffic.*
+
+---
+
+### 6.6 Amazon CloudWatch Container Insights Dashboard
+
+With the CloudWatch Agent running, Container Insights aggregates real-time metrics across clusters, namespaces, nodes, and individual pods, providing visual performance charts for CPU utilization, memory utilization, network I/O, and pod restarts:
+
+![Figure 6.3: Amazon CloudWatch Container Insights Performance Monitoring](screenshots/24-cloudwatch-container-insights-dashboard.png)
+*Figure 6.3: Container Insights performance monitoring dashboard displaying node and pod CPU/memory utilization across the `streamingapp-eks` cluster.*
+
+---
+
+### 6.7 Automated CloudWatch Metric Alarms
+
+To ensure production stability, I provisioned automated CloudWatch Metric Alarms:
+
+1. **`StreamingApp-EKS-High-Node-CPU`**:
+   - **Metric:** `CPUUtilization` (`AWS/EC2` namespace)
+   - **Dimension:** `AutoScalingGroupName = eks-standard-workers-bad04727-877d-36b5-9ceb-b1d237a3b1f3`
+   - **Threshold:** $\ge 80.0\%$ for 2 consecutive 5-minute evaluation periods (10 minutes total).
+   - **Action:** Proactively flags cluster compute starvation before pods experience latency.
+
+2. **`StreamingApp-ELB-High-5XX-Errors`**:
+   - **Metric:** `HTTPCode_Backend_5XX` (`AWS/ELB` namespace)
+   - **Dimension:** `LoadBalancerName = a58ecf898ca284bbf9056d00d934692a`
+   - **Threshold:** $\ge 5$ errors in a 5-minute window.
+   - **Action:** Detects downstream application failures (such as unhandled exceptions or database connection drops) at the ingress tier.
+
+#### Verification of Configured Alarms (`aws cloudwatch describe-alarms`):
+```text
+------------------------------------------------------------------------------------------------
+|                                        DescribeAlarms                                        |
++-----------------------+------------------------------------+--------------------+------------+
+|        Metric         |               Name                 |       State        | Threshold  |
++-----------------------+------------------------------------+--------------------+------------+
+|  CPUUtilization       |  StreamingApp-EKS-High-Node-CPU    |  OK                |  80.0      |
+|  HTTPCode_Backend_5XX |  StreamingApp-ELB-High-5XX-Errors  |  OK                |  5.0       |
++-----------------------+------------------------------------+--------------------+------------+
+```
+
+![Figure 6.4: CloudWatch Metric Alarms Configured and Armed](screenshots/25-cloudwatch-metric-alarms.png)
+*Figure 6.4: Active CloudWatch metric alarms in the AWS Console monitoring worker node CPU utilization and Ingress 5XX server errors.*
 
 ---
 
