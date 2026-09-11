@@ -1,0 +1,40 @@
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: streamingapp-eks
+  region: ap-south-1
+  version: "1.31"
+  tags:
+    Project: StreamingApp
+    Student: ShashankDubey
+    Environment: Production
+
+iam:
+  withOIDC: true
+
+managedNodeGroups:
+  - name: standard-workers
+    instanceType: t3.medium
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 3
+    volumeSize: 30
+    volumeType: gp3
+    labels:
+      role: worker
+      workload: streaming-apps
+    tags:
+      nodegroup-type: managed-standard
+      k8s.io/cluster-autoscaler/enabled: "true"
+      k8s.io/cluster-autoscaler/streamingapp-eks: "owned"
+    iam:
+      withAddonPolicies:
+        autoScaler: true
+        cloudWatch: true
+        ebs: true
+        albIngress: true
+
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["api", "audit", "authenticator", "controllerManager", "scheduler"]
