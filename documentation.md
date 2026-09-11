@@ -762,9 +762,337 @@ Both the build commit tag (`3-c75009d`) and the rolling `latest` tag were succes
 
 ---
 
-## Step 5: Kubernetes Deployment on Amazon EKS with Helm *(Upcoming)*
+## Step 5: Kubernetes Deployment on Amazon EKS with Helm
 
-*(Documentation for eksctl cluster provisioning, Helm chart templates, Ingress routing, and MongoDB StatefulSet will be recorded here with terminal outputs and screenshots).*
+### 5.1 Architecture & Production Provisioning Strategy
+
+To transition our containerized microservices stack from single-host Docker into an enterprise-grade, highly available production environment, I architected a deployment on **Amazon Elastic Kubernetes Service (EKS)** managed via **Helm 3**.
+
+```
+                           +-------------------------------------------------------------+
+                           |               Amazon EKS Cluster (ap-south-1)               |
+                           |               Kubernetes 1.31 Control Plane                 |
+                           +------------------------------+------------------------------+
+                                                          |
+                                                          v
+                                +---------------------------------------------------+
+                                |            NGINX Ingress Controller               |
+                                |       Path-Based Unified Traffic Routing          |
+                                +-----+-------------+-------------+------------+----+
+                                      |             |             |            |
+             +------------------------+             |             |            +-----------------------+
+             |                                      |             |                                    |
+             v                                      v             v                                    v
+     +---------------+                      +---------------+ +---------------+                +---------------+
+     |  Frontend UI  |                      | Auth Service  | | Streaming Svc |                | Chat Service  |
+     |  (2 Replicas) |                      |  (1 Replica)  | |  (2 Replicas) |                |  (1 Replica)  |
+     | React + Nginx |                      | Express + JWT | |  Node.js + S3 |                | Node + Socket |
+     +---------------+                      +-------+-------+ +-------+-------+                +-------+-------+
+                                                    |                 |                                |
+                                                    +--------+--------+--------------------------------+
+                                                             |
+                                                             v
+                                             +-------------------------------+
+                                             |       MongoDB Database        |
+                                             |      Internal ClusterIP       |
+                                             +-------------------------------+
+```
+
+#### Why Amazon EKS?
+1. **Managed Control Plane High Availability:** Amazon EKS runs the Kubernetes control plane across three Availability Zones (AZs) with automatic etcd replication, health checks, and self-healing. This removes the administrative burden of managing master nodes.
+2. **Native AWS IAM Integration (IRSA):** By enabling OpenID Connect (OIDC), Kubernetes service accounts bind directly to AWS IAM roles, adhering to the principle of least privilege.
+3. **Managed Node Groups:** EKS managed node groups handle automated EC2 provisioning, OS security patching, and graceful node draining during maintenance.
+
+#### Cluster Specifications:
+- **Cluster Name:** `streamingapp-eks`
+- **Region:** `ap-south-1` (Mumbai)
+- **Kubernetes Version:** `1.31`
+- **Worker Node Sizing:** 2 $\times$ `t3.medium` instances (2 vCPUs, 4 GiB RAM each). This provides a total cluster capacity of 4 vCPUs and 8 GiB RAM—ideal for running our 6 container workloads plus cluster add-ons.
+- **Storage:** EBS `gp3` root volumes (30 GiB, 3,000 IOPS, 125 MB/s throughput) for predictable disk I/O.
+- **Add-on Policies:** Enabled IAM policies for EBS CSI driver, CloudWatch Container Insights, Cluster Autoscaler, and AWS Load Balancer Controller.
+
+---
+
+### 5.2 Declarative Cluster Provisioning (`k8s/eks-cluster.yaml`)
+
+Rather than manually clicking in the AWS Console, I followed **Infrastructure-as-Code (IaC)** principles and authored a declarative `eksctl` cluster specification in `k8s/eks-cluster.yaml`:
+
+```yaml
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: streamingapp-eks
+  region: ap-south-1
+  version: "1.31"
+  tags:
+    Project: StreamingApp
+    Student: ShashankDubey
+    Environment: Production
+
+iam:
+  withOIDC: true
+
+managedNodeGroups:
+  - name: standard-workers
+    instanceType: t3.medium
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 3
+    volumeSize: 30
+    volumeType: gp3
+    labels:
+      role: worker
+      workload: streaming-apps
+    tags:
+      nodegroup-type: managed-standard
+      k8s.io/cluster-autoscaler/enabled: "true"
+      k8s.io/cluster-autoscaler/streamingapp-eks: "owned"
+    iam:
+      withAddonPolicies:
+        autoScaler: true
+        cloudWatch: true
+        ebs: true
+        albIngress: true
+
+cloudWatch:
+  clusterLogging:
+    enableTypes: ["api", "audit", "authenticator", "controllerManager", "scheduler"]
+```
+
+#### Provisioning Command:
+```bash
+eksctl create cluster -f k8s/eks-cluster.yaml
+```
+
+*This command automatically orchestrates:*
+1. A dedicated production VPC with public and private subnets across 3 Availability Zones (`ap-south-1a`, `ap-south-1b`, `ap-south-1c`), NAT gateways, and Internet gateways.
+2. The EKS managed control plane with CloudWatch log streams.
+3. The IAM OIDC provider for IRSA.
+4. An Auto Scaling Group with 2 `t3.medium` worker instances joined to the cluster.
+5. Automatic configuration of the local `kubectl` context pointing to the EKS cluster endpoint.
+
+![Figure 5.1: Amazon EKS Cluster Created in AWS Management Console](screenshots/10-aws-eks-cluster-created.png)
+*Figure 5.1: Verification of the active Amazon EKS cluster `streamingapp-eks` running Kubernetes v1.31 in region `ap-south-1` (Mumbai).*
+
+![Figure 5.2: EKS Managed Node Group with Attached Compute](screenshots/11-aws-eks-cluster-two-compute-attached.png)
+*Figure 5.2: The `standard-workers` managed node group provisioned across multiple availability zones with 2 active compute instances.*
+
+![Figure 5.3: Amazon EC2 Instances Running as EKS Worker Nodes](screenshots/12-aws-two-t3-medium-ec2-instances.png)
+*Figure 5.3: The two `t3.medium` EC2 worker instances in `Running` state powering the Kubernetes data plane.*
+
+---
+
+### 5.3 Helm Chart Architecture (`helm/streaming-app/`)
+
+To manage the microservices declaratively, I built a modular Helm 3 chart named `streaming-app`:
+
+```text
+helm/streaming-app/
+├── Chart.yaml                  # Chart metadata and version definition
+├── values.yaml                 # Centralized configuration values (single source of truth)
+└── templates/
+    ├── _helpers.tpl            # Standardized template labels and naming macros
+    ├── configmap.yaml          # Non-sensitive environment variables (S3 bucket, URLs, ports)
+    ├── secret.yaml             # Encrypted secrets (JWT signing secret)
+    ├── mongodb-deployment.yaml # MongoDB database Deployment and ClusterIP service
+    ├── frontend-deployment.yaml# React + NGINX SPA Deployment and Service (Port 80)
+    ├── auth-deployment.yaml    # Auth microservice Deployment and Service (Port 3001)
+    ├── streaming-deployment.yaml# Streaming microservice Deployment and Service (Port 3002)
+    ├── admin-deployment.yaml   # Admin microservice Deployment and Service (Port 3003)
+    ├── chat-deployment.yaml    # Chat microservice Deployment and Service (Port 3004)
+    ├── ingress.yaml            # Ingress path-based routing rules
+    └── hpa.yaml                # HorizontalPodAutoscalers for Frontend & Streaming
+```
+
+#### Key Architectural Features of the Chart:
+1. **Centralized Image References from Amazon ECR:**
+   All microservice image tags and registries are dynamically parameterized through `values.yaml`:
+   ```yaml
+   global:
+     awsRegion: ap-south-1
+     awsAccountId: "675789571925"
+     s3Bucket: streamingapp-media-675789571925-ap-south-1
+     imageRegistry: 675789571925.dkr.ecr.ap-south-1.amazonaws.com
+     imageTag: latest
+     imagePullPolicy: Always
+   ```
+
+2. **Self-Healing via Liveness and Readiness Probes:**
+   Every microservice template includes native HTTP probes. For instance, the streaming service verifies health before receiving ingress traffic:
+   ```yaml
+   livenessProbe:
+     httpGet:
+       path: /api/health
+       port: http
+     initialDelaySeconds: 15
+     periodSeconds: 10
+   readinessProbe:
+     httpGet:
+       path: /api/health
+       port: http
+     initialDelaySeconds: 5
+     periodSeconds: 5
+   ```
+
+3. **Deterministic Resource Allocations for Scheduling:**
+   Strict CPU and memory `requests` and `limits` are configured on all pods. This prevents noisy neighbors from starving critical services and allows the Kubernetes scheduler to place pods optimally across our worker nodes:
+   - **Frontend:** Request `50m CPU / 64Mi RAM`, Limit `200m CPU / 128Mi RAM`
+   - **Backend APIs:** Request `50m - 100m CPU / 128Mi RAM`, Limit `200m - 300m CPU / 256Mi RAM`
+   - **MongoDB:** Request `100m CPU / 256Mi RAM`, Limit `500m CPU / 512Mi RAM`
+
+4. **Centralized Ingress Routing (`ingress.yaml`):**
+   Instead of exposing 6 separate public cloud load balancers (which would incur massive cloud cost), a single Ingress resource provides intelligent layer-7 path-based routing:
+   - `/` $\rightarrow$ `streaming-app-frontend` (Port 80)
+   - `/api/auth` $\rightarrow$ `streaming-app-auth` (Port 3001)
+   - `/api/streaming` $\rightarrow$ `streaming-app-streaming` (Port 3002)
+   - `/api/admin` $\rightarrow$ `streaming-app-admin` (Port 3003)
+   - `/api/chat` & `/socket.io` $\rightarrow$ `streaming-app-chat` (Port 3004)
+
+5. **Horizontal Pod Autoscaling (HPA):**
+   - **Frontend HPA:** Scales from 2 to 5 replicas when average CPU exceeds 50%.
+   - **Streaming HPA:** Scales from 2 to 6 replicas when average CPU exceeds 60%.
+
+---
+
+### 5.4 Deployment & Verification
+
+#### 1. Validated Helm Chart Syntax:
+```bash
+helm lint ./helm/streaming-app
+```
+*Output:*
+```text
+==> Linting ./helm/streaming-app
+1 chart(s) linted, 0 chart(s) failed
+```
+
+#### 2. Provisioned Ingress Controller & Deployed Helm Release:
+```bash
+# 1. Install NGINX Ingress Controller
+helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+helm repo update
+helm install ingress-nginx ingress-nginx/ingress-nginx --namespace ingress-nginx --create-namespace
+
+# 2. Deploy the StreamingApp Microservices Stack
+helm install streaming-app ./helm/streaming-app
+```
+
+#### 3. Verification 1: EKS Cluster Nodes Ready (`kubectl get nodes -o wide`)
+```text
+NAME                                            STATUS   ROLES    AGE     VERSION                INTERNAL-IP      EXTERNAL-IP     OS-IMAGE                        KERNEL-VERSION                    CONTAINER-RUNTIME
+ip-192-168-45-153.ap-south-1.compute.internal   Ready    <none>   5m10s   v1.31.14-eks-cb19647   192.168.45.153   13.207.190.72   Amazon Linux 2023.12.20260831   6.1.182-227.379.amzn2023.x86_64   containerd://2.2.5+unknown
+ip-192-168-85-150.ap-south-1.compute.internal   Ready    <none>   5m10s   v1.31.14-eks-cb19647   192.168.85.150   13.203.79.179   Amazon Linux 2023.12.20260831   6.1.182-227.379.amzn2023.x86_64   containerd://2.2.5+unknown
+```
+Both `t3.medium` worker nodes joined the cluster and transitioned to `Ready` state across separate Availability Zones.
+
+#### 4. Verification 2: All 8 Pods Running Across Microservices (`kubectl get pods -o wide`)
+```text
+NAME                                       READY   STATUS    RESTARTS   AGE   IP               NODE                                            NOMINATED NODE   READINESS GATES
+streaming-app-admin-79d45f4b85-fj4db       1/1     Running   0          3m    192.168.35.22    ip-192-168-45-153.ap-south-1.compute.internal   <none>           <none>
+streaming-app-auth-86ccc46878-d4ckk        1/1     Running   0          3m    192.168.83.194   ip-192-168-85-150.ap-south-1.compute.internal   <none>           <none>
+streaming-app-chat-7c46dbd8bd-w9nz9        1/1     Running   0          3m    192.168.78.58    ip-192-168-85-150.ap-south-1.compute.internal   <none>           <none>
+streaming-app-frontend-5d54d7cbc8-cxjgx    1/1     Running   0          3m    192.168.89.17    ip-192-168-85-150.ap-south-1.compute.internal   <none>           <none>
+streaming-app-frontend-5d54d7cbc8-jh227    1/1     Running   0          3m    192.168.40.179   ip-192-168-45-153.ap-south-1.compute.internal   <none>           <none>
+streaming-app-mongodb-575f88b7cf-vd5rq     1/1     Running   0          3m    192.168.44.112   ip-192-168-45-153.ap-south-1.compute.internal   <none>           <none>
+streaming-app-streaming-7bd4d596dd-7xvsd   1/1     Running   0          3m    192.168.77.46    ip-192-168-85-150.ap-south-1.compute.internal   <none>           <none>
+streaming-app-streaming-7bd4d596dd-gfwns   1/1     Running   0          3m    192.168.48.27    ip-192-168-45-153.ap-south-1.compute.internal   <none>           <none>
+```
+100% of all microservices, frontend replicas, and MongoDB are in `Running` state with 0 restarts.
+
+#### 5. Verification 3: Live Ingress & AWS Load Balancer Endpoint (`kubectl get ingress`)
+```text
+NAME                    CLASS   HOSTS   ADDRESS                                                                    PORTS   AGE
+streaming-app-ingress   nginx   *       a58ecf898ca284bbf9056d00d934692a-1428735725.ap-south-1.elb.amazonaws.com   80      3m
+```
+
+![Figure 5.4: AWS Classic Load Balancer Provisioned for Kubernetes Ingress](screenshots/13-aws-load-balancer-for-kubernetes.png)
+*Figure 5.4: Verification of the active AWS Load Balancer in the EC2 Console distributing traffic to the EKS worker nodes.*
+
+#### 6. Verification 4: End-to-End Ingress Path Routing & API Verification (`scripts/test-ingress.ps1`)
+I verified the public AWS Load Balancer endpoint across all microservices using an automated test script:
+
+```text
+=== 1. Testing Frontend UI ===
+Status: 200 Length: 645 (HTML delivered successfully)
+
+=== 2. Testing Streaming Service ===
+Streaming Videos Response: {"success":true,"videos":[]}
+
+=== 3. Testing Auth Service Registration ===
+Register Response: {
+  "success": true,
+  "message": "Registration successful",
+  "user": {
+    "id": "6aa369fa3e33b6e1168b54df",
+    "name": "Shashank Dubey",
+    "email": "shashank@testcorp.com",
+    "role": "user"
+  }
+}
+
+=== 4. Testing Auth Service Login ===
+Login Response Success: True
+Token Received: eyJhbGciOiJIUzI1NiIs...
+
+=== 5. Ingress Routing Verification Complete ===
+```
+
+#### 7. Verification 5: Live Metrics & Horizontal Pod Autoscaler Readiness (`kubectl get hpa`)
+```text
+NAME                          REFERENCE                            TARGETS       MINPODS   MAXPODS   REPLICAS   AGE
+streaming-app-frontend-hpa    Deployment/streaming-app-frontend    cpu: 2%/50%   2         5         2          4m
+streaming-app-streaming-hpa   Deployment/streaming-app-streaming   cpu: 1%/60%   2         6         2          4m
+```
+Both HPAs are actively collecting metrics from the `metrics-server` addon and are armed for dynamic auto-scaling under load.
+
+---
+
+### 5.5 End-to-End Media Ingestion, S3 Persistence & Video Streaming Verification
+
+To thoroughly validate that the microservices architecture works end-to-end on AWS EKS with cloud storage integration, I tested the full video lifecycle from admin ingestion to client playback:
+
+#### 1. Video Upload via Admin Studio:
+Using the React frontend connected through the AWS Load Balancer, I navigated to the Admin Studio (`/admin/upload`), populated metadata for a new title ("Sample Video", Action genre, 2026), and uploaded both the source MP4 video file and a high-resolution thumbnail image:
+
+![Figure 5.5: Video Upload Form in Admin Studio](screenshots/14-upload-video-for-streaming-from-admin-studio.png)
+*Figure 5.5: Populating video metadata and uploading MP4 media and thumbnail assets via the Admin Studio interface.*
+
+The multipart upload completed successfully, triggering database persistence in MongoDB and direct upload to Amazon S3:
+
+![Figure 5.6: Video Upload Successful Confirmation](screenshots/15-streaming-video-uploaded-successfully.png)
+*Figure 5.6: UI confirmation confirming successful upload and database registration.*
+
+#### 2. Amazon S3 Media Persistence & Folder Hierarchy:
+I inspected the configured S3 bucket `streamingapp-media-675789571925-ap-south-1` in the AWS Management Console to confirm proper asset segregation:
+
+![Figure 5.7: Amazon S3 Bucket Folder Structure](screenshots/16-s3-bucket-folder-structure.png)
+*Figure 5.7: Dedicated `videos/` and `thumbnails/` folder hierarchy maintained inside the Amazon S3 bucket.*
+
+- **Video Object:** The uploaded MP4 video was persisted under the `videos/` prefix:
+![Figure 5.8: Video File Stored in S3 Bucket](screenshots/17-video-saved-to-s3-bucket.png)
+*Figure 5.8: The MP4 video object stored with unique timestamped key in Amazon S3.*
+
+- **Thumbnail Object:** The image asset was persisted under the `thumbnails/` prefix:
+![Figure 5.9: Video Thumbnail Stored in S3 Bucket](screenshots/18-video-thumbnail-saved-to-s3-bucket.png)
+*Figure 5.9: The PNG thumbnail image object stored in Amazon S3.*
+
+#### 3. Video Catalog Rendering in StreamFlix:
+When navigating to the public catalog (`/browse`), the frontend queries the `streamingService` microservice, which resolves metadata from MongoDB and builds asset URLs backed by S3. The newly uploaded "Sample Video" card and its thumbnail render immediately in the UI:
+
+![Figure 5.10: StreamFlix Browse Page Displaying Uploaded Video](screenshots/19-streaming-video-fetched-successfully.png)
+*Figure 5.10: StreamFlix catalog dynamically fetching and rendering the uploaded video card and thumbnail from the cluster.*
+
+#### 4. Video Streaming Playback & HTTP 206 Byte-Range Verification:
+Clicking the video card opens the custom video player. The client initiates chunked video streaming through the EKS Ingress:
+
+![Figure 5.11: Video Streaming Active in StreamFlix Player](screenshots/20-video-streaming.png)
+*Figure 5.11: Video player actively streaming the video from Amazon S3 through the `streamingService` microservice.*
+
+Inspecting the Chrome DevTools Network panel confirms that the video is delivered using **HTTP 206 Partial Content** chunked byte-range requests (`Content-Range: bytes 0-999999/15636818`), guaranteeing smooth, buffer-free playback without downloading the entire 15.6 MB file at once:
+
+![Figure 5.12: Chunked Byte-Range HTTP 206 Delivery from S3](screenshots/21-able-to-load-chunks-of-videos.png)
+*Figure 5.12: Chrome DevTools Network panel confirming HTTP 206 Partial Content byte-range streaming directly from Amazon S3.*
 
 ---
 
