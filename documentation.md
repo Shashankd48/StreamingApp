@@ -1412,6 +1412,8 @@ The platform comprises five containerized microservices and one stateful databas
 > 3. **WebSocket In-Memory State (Chat Service &rarr; Fixed 1 Replica):** Real-time Socket.IO WebSockets maintain active in-memory TCP socket connections. Scaling WebSockets across multiple pods requires an external distributed message broker (such as a Redis Pub/Sub adapter) so users on pod A can receive messages from users on pod B. A single replica cleanly preserves watch-room chat synchronization without Redis operational overhead.
 > 4. **Block Storage Constraints (MongoDB &rarr; Single Stateful Replica):** The database mounts an AWS EBS `gp3` volume (`vol-09ee6f750e5fcff05`), which is a `ReadWriteOnce` (RWO) block device. An EBS volume can only attach to one EC2 instance at a time. Horizontal scaling for MongoDB requires a multi-node ReplicaSet with multiple EBS volumes.
 > 5. **Worker Node Capacity Optimization:** The cluster runs on 2 &times; `t3.medium` instances (4 vCPUs, 8GB RAM). Limiting autoscaling to high-traffic components ensures the cluster remains comfortably within node compute and AWS ENI pod IP allocation limits.
+>
+> *For an in-depth breakdown, see the standalone architectural guide: [docs/pod-scaling-architecture.md](docs/pod-scaling-architecture.md).*
 
 #### Core Network Interaction Protocols:
 1. **User Authentication Flow**:
