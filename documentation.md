@@ -1308,8 +1308,8 @@ The StreamingApp platform is engineered as a highly resilient, containerized, cl
 ```mermaid
 graph TB
     subgraph "Clients & External Traffic"
-        Client[Web Browser / Mobile Client]
-        AdminUser[Admin Studio User]
+        Client["Web Browser / Mobile Client"]
+        AdminUser["Admin Studio User"]
     end
 
     subgraph "AWS Edge & Network Tier (ap-south-1)"
@@ -1351,43 +1351,43 @@ graph TB
     end
 
     %% Client & Network Connections
-    Client -->|HTTP / HTTPS| ALB
-    AdminUser -->|HTTP / HTTPS| ALB
-    ALB -->|Traffic Routing| IngressNginx
+    Client -->|"HTTP / HTTPS"| ALB
+    AdminUser -->|"HTTP / HTTPS"| ALB
+    ALB -->|"Traffic Routing"| IngressNginx
 
     %% Ingress to Services
-    IngressNginx -->|/ (Frontend)| Frontend
-    IngressNginx -->|/api/auth/*| AuthSvc
-    IngressNginx -->|/api/streaming/*| StreamingSvc
-    IngressNginx -->|/api/admin/*| AdminSvc
-    IngressNginx -->|/api/chat/*| ChatSvc
+    IngressNginx -->|"Route: / (Frontend)"| Frontend
+    IngressNginx -->|"Route: /api/auth/*"| AuthSvc
+    IngressNginx -->|"Route: /api/streaming/*"| StreamingSvc
+    IngressNginx -->|"Route: /api/admin/*"| AdminSvc
+    IngressNginx -->|"Route: /api/chat/*"| ChatSvc
 
     %% Service to Service & Storage
-    Frontend -->|API Requests| IngressNginx
-    AuthSvc -->|Read / Write Users| MongoDB
-    StreamingSvc -->|Read Metadata| MongoDB
-    AdminSvc -->|Write Video Docs| MongoDB
-    ChatSvc -->|Read / Write Messages| MongoDB
-    MongoDB -->|Mount PVC ebs-gp3-sc| EBS
+    Frontend -->|"API Requests"| IngressNginx
+    AuthSvc -->|"Read / Write Users"| MongoDB
+    StreamingSvc -->|"Read Metadata"| MongoDB
+    AdminSvc -->|"Write Video Docs"| MongoDB
+    ChatSvc -->|"Read / Write Messages"| MongoDB
+    MongoDB -->|"Mount PVC ebs-gp3-sc"| EBS
 
-    AdminSvc -->|Multipart Upload| S3
-    StreamingSvc -->|Byte-Range Stream 206| S3
+    AdminSvc -->|"Multipart Upload"| S3
+    StreamingSvc -->|"Byte-Range Stream 206"| S3
 
     %% Observability
-    Frontend -.->|Container Logs| FluentBit
-    AuthSvc -.->|Container Logs| FluentBit
-    StreamingSvc -.->|Container Logs| FluentBit
-    AdminSvc -.->|Container Logs| FluentBit
-    ChatSvc -.->|Container Logs| FluentBit
-    FluentBit -->|Ship Logs| CWLogs
-    CWAgent -->|Collect Metrics| CWLogs
+    Frontend -.->|"Container Logs"| FluentBit
+    AuthSvc -.->|"Container Logs"| FluentBit
+    StreamingSvc -.->|"Container Logs"| FluentBit
+    AdminSvc -.->|"Container Logs"| FluentBit
+    ChatSvc -.->|"Container Logs"| FluentBit
+    FluentBit -->|"Ship Logs"| CWLogs
+    CWAgent -->|"Collect Metrics"| CWLogs
     CWLogs --> CWInsights
     CWLogs --> CWAlarms
 
     %% CI/CD flow
-    GitHub -->|Git Webhook / Poll| Jenkins
-    Jenkins -->|Build & Tag Docker Images| ECR
-    Jenkins -.->|Deploy Helm Chart| IngressNginx
+    GitHub -->|"Git Webhook / Poll"| Jenkins
+    Jenkins -->|"Build & Tag Docker Images"| ECR
+    Jenkins -.->|"Deploy Helm Chart"| IngressNginx
 ```
 
 ---
@@ -1793,9 +1793,9 @@ graph LR
         Lambda["AWS Lambda Function<br/>(Event Formatter)"]
     end
 
-    JenkinsPipeline -->|Publish Event| SNSTopic
-    HelmRelease -->|Post-Deploy Hook| SNSTopic
-    CWAlarm -->|Alarm Action| SNSTopic
+    JenkinsPipeline -->|"Publish Event"| SNSTopic
+    HelmRelease -->|"Post-Deploy Hook"| SNSTopic
+    CWAlarm -->|"Alarm Action"| SNSTopic
 
     SNSTopic --> Email
     SNSTopic --> Lambda

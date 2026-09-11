@@ -10,7 +10,7 @@ import time
 import urllib.request
 import urllib.error
 import concurrent.futures
-from statistics import mean, quantiles
+from statistics import mean
 
 DEFAULT_BASE_URL = "http://a58ecf898ca284bbf9056d00d934692a-1428735725.ap-south-1.elb.amazonaws.com"
 
@@ -68,14 +68,18 @@ def run_load_test(target_url, concurrency=20, total_requests=1000):
     wall_time = time.perf_counter() - wall_start
     rps = total_requests / wall_time if wall_time > 0 else 0
 
-    latencies.sort()
-    p50 = latencies[int(len(latencies) * 0.50)]
-    p90 = latencies[int(len(latencies) * 0.90)]
-    p95 = latencies[int(len(latencies) * 0.95)]
-    p99 = latencies[int(len(latencies) * 0.99)]
-    avg_lat = mean(latencies)
-    min_lat = min(latencies)
-    max_lat = max(latencies)
+    if latencies:
+        latencies.sort()
+        n = len(latencies)
+        p50 = latencies[min(int(n * 0.50), n - 1)]
+        p90 = latencies[min(int(n * 0.90), n - 1)]
+        p95 = latencies[min(int(n * 0.95), n - 1)]
+        p99 = latencies[min(int(n * 0.99), n - 1)]
+        avg_lat = mean(latencies)
+        min_lat = min(latencies)
+        max_lat = max(latencies)
+    else:
+        p50 = p90 = p95 = p99 = avg_lat = min_lat = max_lat = 0.0
 
     print("\n--- Load Test Results ---")
     print(f" Total Duration:   {wall_time:.2f} s")
