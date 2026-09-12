@@ -2106,6 +2106,13 @@ The test dispatch script simulated the full operational lifecycle across deploym
 ![Figure 9.9: Telegram ChatOps CloudWatch Metric Alarm and Auto-Recovery Alert](screenshots/34-telegram-bot-cloudwatch-alarms-and-recovery-alert.png)
 *Figure 9.9: Automated CloudWatch operational incident notification and recovery confirmation delivered directly to the Telegram operations channel.*
 
+##### C. Synchronized Amazon SNS Email and Telegram ChatOps Alert Simulation:
+- **Dispatched Payload:** Multi-channel broadcast published simultaneously across the Amazon SNS Topic and the Telegram Bot API confirming healthy cluster pods and operational CI/CD pipeline.
+- **Email Notification Received:**
+
+![Figure 9.10: Synchronized AWS SNS Email Alert Received in Inbox](screenshots/35-aws-sns-email-synchronized-chatops-alert-simulation.png)
+*Figure 9.10: Synchronized live alert email delivered by Amazon SNS (`AWS Notifications`) to `shashankd48+HV17@gmail.com` matching the Telegram ChatOps broadcast.*
+
 ---
 
 ## Project Conclusion & Deliverables Summary
