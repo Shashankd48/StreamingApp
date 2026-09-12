@@ -154,6 +154,16 @@ pipeline {
                         --message "Pipeline Build #${BUILD_NUMBER} succeeded! All 5 images tagged (${IMAGE_TAG}) and published to Amazon ECR. Commit: ${GIT_COMMIT}." || true
                 """
             }
+            sh """
+                python3 scripts/send-telegram-alerts.py "🟢 *[SUCCESS] StreamFlix CI/CD Deployment #\${BUILD_NUMBER}*
+━━━━━━━━━━━━━━━━━━━━━━
+*Job:* \\\`Shashank-StreamingApp-CI\\\`
+*Build:* #\${BUILD_NUMBER} (SUCCESS)
+*Tag:* \\\`\${IMAGE_TAG}\\\`
+*Commit:* \\\`\${GIT_COMMIT}\\\`
+*Cluster:* AWS EKS \\\`StreamingApp-Cluster\\\` (ap-south-1)
+*Status:* All 5 Microservices Built & Published to ECR" || python scripts/send-telegram-alerts.py "🟢 *[SUCCESS] StreamFlix CI/CD Deployment #\${BUILD_NUMBER}* (Commit: \${GIT_COMMIT})" || true
+            """
         }
         failure {
             echo "FAILURE: Build or push failed. Check console output above for error logs."
@@ -166,6 +176,14 @@ pipeline {
                         --message "Pipeline Build #${BUILD_NUMBER} FAILED! Stage error encountered. Please check Jenkins console output for details. Commit: ${GIT_COMMIT}." || true
                 """
             }
+            sh """
+                python3 scripts/send-telegram-alerts.py "🔴 *[FAILURE] StreamFlix CI/CD Deployment #\${BUILD_NUMBER}*
+━━━━━━━━━━━━━━━━━━━━━━
+*Job:* \\\`Shashank-StreamingApp-CI\\\`
+*Build:* #\${BUILD_NUMBER} (FAILED)
+*Commit:* \\\`\${GIT_COMMIT}\\\`
+*Status:* Pipeline Stage Error Encountered. Check Jenkins Console." || python scripts/send-telegram-alerts.py "🔴 *[FAILURE] StreamFlix CI/CD Deployment #\${BUILD_NUMBER}*" || true
+            """
         }
     }
 }

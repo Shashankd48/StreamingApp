@@ -12,6 +12,7 @@ import {
   InputBase,
   alpha,
   Stack,
+  Chip,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -148,8 +149,22 @@ export const Header = ({ onSearch }) => {
   return (
     <StyledAppBar position="fixed" className={isSolid ? 'solid' : ''}>
       <Toolbar disableGutters sx={{ px: { xs: 2, md: 4 }, minHeight: 72 }}>
-        <Stack direction="row" alignItems="center" spacing={3} sx={{ mr: 4 }}>
+        <Stack direction="row" alignItems="center" spacing={2} sx={{ mr: 4 }}>
           <Brand onClick={() => navigate('/')}>StreamFlix</Brand>
+          <Chip
+            label="Live on EKS"
+            size="small"
+            color="success"
+            variant="outlined"
+            sx={{
+              display: { xs: 'none', sm: 'inline-flex' },
+              height: 22,
+              fontSize: '0.7rem',
+              fontWeight: 700,
+              borderColor: 'rgba(46, 125, 50, 0.6)',
+              color: '#81c784',
+            }}
+          />
           <Stack direction="row" spacing={1} sx={{ display: { xs: 'none', md: 'flex' } }}>
             {navItems.map((item) => (
               <NavLink
