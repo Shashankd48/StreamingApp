@@ -2113,6 +2113,13 @@ The test dispatch script simulated the full operational lifecycle across deploym
 ![Figure 9.10: Synchronized AWS SNS Email Alert Received in Inbox](screenshots/35-aws-sns-email-synchronized-chatops-alert-simulation.png)
 *Figure 9.10: Synchronized live alert email delivered by Amazon SNS (`AWS Notifications`) to `shashankd48+HV17@gmail.com` matching the Telegram ChatOps broadcast.*
 
+##### D. Automated Pipeline Deployment Alert (Jenkins Build #17 & Live Rolling Update):
+- **Dispatched Payload:** Automated push notification dispatched by Jenkins pipeline Build #17 upon successful commit, Docker build, ECR push, and zero-downtime rolling update rollout on the Amazon EKS cluster.
+- **Telegram Notification Received:**
+
+![Figure 9.11: Automated Telegram ChatOps Notification Received for Jenkins Build #17](screenshots/36-telegram-automated-pipeline-update-after-deployment.png)
+*Figure 9.11: Live automated notification received in Telegram from `@shashank_streamflix_bot` confirming successful completion of Jenkins Build #17 and EKS continuous deployment.*
+
 ---
 
 ## Project Conclusion & Deliverables Summary
