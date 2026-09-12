@@ -1,4 +1,8 @@
-# StreamingApp
+# StreamingApp - Cloud-Native Orchestration, CI/CD & Scaling on AWS
+
+> 🏆 **Graded Project Report & Architecture Guide:**  
+> For the complete, end-to-end technical documentation covering **Dockerization, AWS ECR/S3, Jenkins CI/CD, Amazon EKS (Helm + Ingress), CloudWatch Observability, EBS Persistent Storage, HPA Autoscaling, Telegram ChatOps, and Cost-Optimization Teardown**, please refer to:  
+> 👉 **[`documentation.md`](documentation.md)**
 
 Stream premium video content, host live watch parties, and manage your catalogue with a modern microservice architecture. The platform now ships with a production-ready admin portal, real-time chat, S3-backed adaptive streaming, and a redesigned cinematic frontend experience.
 
