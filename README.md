@@ -1,5 +1,5 @@
 # Graded Project: Container Orchestration, CI/CD Pipeline & Scaling on AWS
-**Student Name:** Shashank Dubey
+
 **Course / Module:** Container Orchestration and Scaling  
 **Project Repository:** [github.com/Shashankd48/StreamingApp](https://github.com/Shashankd48/StreamingApp)  
 **Upstream Repository:** [github.com/UnpredictablePrashant/StreamingApp](https://github.com/UnpredictablePrashant/StreamingApp)  
