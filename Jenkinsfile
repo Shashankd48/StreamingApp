@@ -155,14 +155,14 @@ pipeline {
                 """
             }
             sh """
-                python3 scripts/send-telegram-alerts.py "🟢 *[SUCCESS] StreamFlix CI/CD Deployment #\${BUILD_NUMBER}*
+                python3 scripts/send-telegram-alerts.py "🟢 *[SUCCESS] StreamFlix CI/CD Deployment #${BUILD_NUMBER}*
 ━━━━━━━━━━━━━━━━━━━━━━
-*Job:* \\\`Shashank-StreamingApp-CI\\\`
-*Build:* #\${BUILD_NUMBER} (SUCCESS)
-*Tag:* \\\`\${IMAGE_TAG}\\\`
-*Commit:* \\\`\${GIT_COMMIT}\\\`
-*Cluster:* AWS EKS \\\`StreamingApp-Cluster\\\` (ap-south-1)
-*Status:* All 5 Microservices Built & Published to ECR" || python scripts/send-telegram-alerts.py "🟢 *[SUCCESS] StreamFlix CI/CD Deployment #\${BUILD_NUMBER}* (Commit: \${GIT_COMMIT})" || true
+*Job:* Shashank-StreamingApp-CI
+*Build:* #${BUILD_NUMBER} (SUCCESS)
+*Tag:* ${IMAGE_TAG}
+*Commit:* ${GIT_COMMIT}
+*Cluster:* AWS EKS StreamingApp-Cluster (ap-south-1)
+*Status:* All 5 Microservices Built & Published to ECR" || python scripts/send-telegram-alerts.py "🟢 *[SUCCESS] StreamFlix CI/CD Deployment #${BUILD_NUMBER}* (Commit: ${GIT_COMMIT})" || true
             """
         }
         failure {
@@ -177,12 +177,12 @@ pipeline {
                 """
             }
             sh """
-                python3 scripts/send-telegram-alerts.py "🔴 *[FAILURE] StreamFlix CI/CD Deployment #\${BUILD_NUMBER}*
+                python3 scripts/send-telegram-alerts.py "🔴 *[FAILURE] StreamFlix CI/CD Deployment #${BUILD_NUMBER}*
 ━━━━━━━━━━━━━━━━━━━━━━
-*Job:* \\\`Shashank-StreamingApp-CI\\\`
-*Build:* #\${BUILD_NUMBER} (FAILED)
-*Commit:* \\\`\${GIT_COMMIT}\\\`
-*Status:* Pipeline Stage Error Encountered. Check Jenkins Console." || python scripts/send-telegram-alerts.py "🔴 *[FAILURE] StreamFlix CI/CD Deployment #\${BUILD_NUMBER}*" || true
+*Job:* Shashank-StreamingApp-CI
+*Build:* #${BUILD_NUMBER} (FAILED)
+*Commit:* ${GIT_COMMIT}
+*Status:* Pipeline Stage Error Encountered. Check Jenkins Console." || python scripts/send-telegram-alerts.py "🔴 *[FAILURE] StreamFlix CI/CD Deployment #${BUILD_NUMBER}*" || true
             """
         }
     }
